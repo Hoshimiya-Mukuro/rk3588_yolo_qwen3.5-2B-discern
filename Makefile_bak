@@ -1,0 +1,137 @@
+# Makefile for nc2rtsp — USB Camera → RTSP Server
+# Must be run from the project/ directory (where this Makefile lives).
+# Quick start:
+#   make                 # cross-compile with default toolchain
+#   make native          # native build (host gcc)
+#   make clean           # clean build artifacts
+#   make V=1             # verbose
+
+# ─── Toolchain ──────────────────────────────────────────────────────
+CROSS   ?= /opt/gcc-arm/bin/aarch64-none-linux-gnu-
+CC       = $(CROSS)gcc
+CXX      = $(CROSS)g++
+AR       = $(CROSS)ar
+STRIP    = $(CROSS)strip --strip-unneeded
+
+# ─── Directories (relative to project/ where Makefile is) ───────────
+SRCDIR  := src
+INCDIR  := include
+LIBDIR  := lib
+OUTDIR  := build
+BINDIR  := $(OUTDIR)/bin
+TARGET  := $(BINDIR)/nc2rtsp
+
+# ─── Source Files (with relative paths) ─────────────────────────────
+C_SRC   := $(SRCDIR)/uvc.c $(SRCDIR)/ringbuf.c $(SRCDIR)/encode.c $(SRCDIR)/decode.c
+CXX_SRC := $(SRCDIR)/devicesource.cpp $(SRCDIR)/rtsp_s.cpp main.cpp
+
+# ─── Object Files (flat structure in build/) ────────────────────────
+C_OBJS   := $(OUTDIR)/uvc.o $(OUTDIR)/ringbuf.o $(OUTDIR)/encode.o $(OUTDIR)/decode.o
+CXX_OBJS := $(OUTDIR)/devicesource.o $(OUTDIR)/rtsp_s.o $(OUTDIR)/main.o
+ALL_OBJS := $(C_OBJS) $(CXX_OBJS)
+
+# ─── Include Paths ──────────────────────────────────────────────────
+INCLUDES := -I$(SRCDIR) \
+            -I. \
+            -I$(INCDIR)/live555 \
+            -I$(INCDIR)/rockchip \
+            -I$(INCDIR)/rga \
+            -I$(INCDIR)/jpeg
+
+# ─── Libraries ──────────────────────────────────────────────────────
+LIB_LIVE555 := -lliveMedia -lgroupsock -lBasicUsageEnvironment -lUsageEnvironment
+LIB_RK      := -lrockchip_mpp -lturbojpeg
+LIB_SYS     := -lpthread -lrt  -ldl
+
+# $(if ...) 在展开时求值，能正确响应 native: CROSS:= 的 target-specific 赋值
+# native → 用系统 /usr/lib/.../librockchip_mpp.so
+# cross  → 用 lib/librockchip_mpp.a
+LDFLAGS      = $(LIB_LIVE555) -L$(LIBDIR) -Wl,--allow-multiple-definition \
+               $(if $(CROSS),$(LIB_RK),/usr/lib/aarch64-linux-gnu/librockchip_mpp.so -lturbojpeg) \
+               $(LIB_SYS)
+
+# ─── Compiler Flags ─────────────────────────────────────────────────
+ifdef ENABLE_MPP
+EXTRA_DEFS := -DENABLE_MPP
+endif
+
+BASE_CFLAGS   := -std=c11   -Wall -Wextra -O2 -g $(EXTRA_DEFS) $(INCLUDES)
+BASE_CXXFLAGS := -std=c++11 -Wall -Wextra -O2 -g $(EXTRA_DEFS) $(INCLUDES)
+
+# ─── Verbose ────────────────────────────────────────────────────────
+V ?= 0
+ifeq ($(V),1)
+AT :=
+else
+AT := @
+endif
+
+# ─── Targets ────────────────────────────────────────────────────────
+.PHONY: all native clean strip info
+
+all: $(TARGET)
+
+native: CROSS :=
+native: all
+
+$(TARGET): $(ALL_OBJS) | $(BINDIR)
+	$(AT)printf "  LD    %s\n" $@
+	$(CXX) $(ALL_OBJS) $(LDFLAGS) -o $@
+
+# ─── Explicit Rules (relative paths, no VPATH needed) ───────────────
+$(OUTDIR)/uvc.o: src/uvc.c src/uvc.h
+	$(AT)mkdir -p $(OUTDIR)
+	$(AT)printf "  CC    %s\n" $<
+	$(CC) $(BASE_CFLAGS) -c $< -o $@
+
+$(OUTDIR)/ringbuf.o: src/ringbuf.c src/ringbuf.h
+	$(AT)mkdir -p $(OUTDIR)
+	$(AT)printf "  CC    %s\n" $<
+	$(CC) $(BASE_CFLAGS) -c $< -o $@
+
+$(OUTDIR)/encode.o: src/encode.c src/encode.h src/decode.h src/test_time.h
+	$(AT)mkdir -p $(OUTDIR)
+	$(AT)printf "  CC    %s\n" $<
+	$(CC) $(BASE_CFLAGS) -c $< -o $@
+
+$(OUTDIR)/decode.o: src/decode.c src/decode.h
+	$(AT)mkdir -p $(OUTDIR)
+	$(AT)printf "  CC    %s\n" $<
+	$(CC) $(BASE_CFLAGS) -c $< -o $@
+
+$(OUTDIR)/devicesource.o: src/devicesource.cpp src/devicesource.hh compat.h
+	$(AT)mkdir -p $(OUTDIR)
+	$(AT)printf "  CXX   %s\n" $<
+	$(CXX) $(BASE_CXXFLAGS) -c $< -o $@
+
+$(OUTDIR)/rtsp_s.o: src/rtsp_s.cpp src/rtsp_s.hh compat.h src/test_time.h
+	$(AT)mkdir -p $(OUTDIR)
+	$(AT)printf "  CXX   %s\n" $<
+	$(CXX) $(BASE_CXXFLAGS) -c $< -o $@
+
+$(OUTDIR)/main.o: main.cpp compat.h src/test_time.h
+	$(AT)mkdir -p $(OUTDIR)
+	$(AT)printf "  CXX   %s\n" $<
+	$(CXX) $(BASE_CXXFLAGS) -c $< -o $@
+
+$(BINDIR):
+	$(AT)mkdir -p $(BINDIR)
+
+strip: $(TARGET)
+	$(AT)printf "  STRIP %s\n" $<
+	$(STRIP) $(TARGET)
+
+clean:
+	rm -rf $(OUTDIR)
+
+# ─── Diagnostic ─────────────────────────────────────────────────────
+info:
+	@echo "=== Build Configuration ==="
+	@echo "CROSS     = $(CROSS)"
+	@echo "CC        = $(CROSS)gcc"
+	@echo "CXX       = $(CROSS)g++"
+	@echo "CFLAGS    = $(BASE_CFLAGS)"
+	@echo "CXXFLAGS  = $(BASE_CXXFLAGS)"
+	@echo "LDFLAGS   = $(LDFLAGS)"
+	@echo "OBJS      = $(ALL_OBJS)"
+	@echo "TARGET    = $(TARGET)"

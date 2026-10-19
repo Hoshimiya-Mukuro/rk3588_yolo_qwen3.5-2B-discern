@@ -1,0 +1,23 @@
+# 编译产物和构建目录
+build/
+bin/
+*.o
+*.exe
+*.a
+*.so
+
+# 模型文件（太大，不要传到 GitHub）
+*.rknn
+*.rkllm
+*.gguf
+
+# 临时文件和日志
+*.log
+*.ppm
+*.jpg
+*.png
+
+# 编辑器配置
+.vscode/
+.idea/
+*.swp
